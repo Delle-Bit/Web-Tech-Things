@@ -1,9 +1,18 @@
+import {
+  createSiteContext,
+  generateAssistantResponse,
+  speakAssistantText,
+  startSpeechToText
+} from "./voice-assistant-service.js";
+import { backgroundMusic } from "./audio-manager-service.js";
+
 const root = document.documentElement;
 const storedTheme = localStorage.getItem("sti-theme");
 const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
 const initialTheme = storedTheme || (prefersDark ? "dark" : "light");
 
 root.dataset.theme = initialTheme;
+backgroundMusic.init();
 
 const themeToggle = document.querySelector(".theme-toggle");
 const themeIcon = document.querySelector(".theme-icon");
@@ -12,6 +21,13 @@ const navPanel = document.querySelector(".nav-panel");
 const revealItems = document.querySelectorAll(".reveal");
 const loader = document.querySelector(".loader");
 const splashSeen = sessionStorage.getItem("group-8-splash-seen") === "true";
+const navigationEntry = performance.getEntriesByType("navigation")[0];
+const isRefresh = navigationEntry?.type === "reload";
+const shouldAnimateSplash = !splashSeen || isRefresh;
+
+if (loader && !shouldAnimateSplash) {
+  loader.classList.add("hide");
+}
 
 function setTheme(theme) {
   root.dataset.theme = theme;
@@ -61,10 +77,210 @@ revealItems.forEach((item) => observer.observe(item));
 window.addEventListener("load", () => {
   if (!loader) return;
 
-  const delay = splashSeen ? 250 : 2400;
+  const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!shouldAnimateSplash) {
+    return;
+  }
+
+  const delay = prefersReducedMotion ? 900 : 4200;
 
   window.setTimeout(() => {
     loader.classList.add("hide");
     sessionStorage.setItem("group-8-splash-seen", "true");
   }, delay);
 });
+
+let vaHoldTimer;
+let vaIsHolding = false;
+let vaIsListening = false;
+let vaSpeechSession;
+
+function createVoiceAssistant() {
+  const wrapper = document.createElement("div");
+  wrapper.className = "voice-assistant";
+  wrapper.innerHTML = `
+    <div class="va-panel" aria-live="polite" aria-hidden="true">
+      <div class="va-header">
+        <div>
+          <span class="va-kicker">STI Assistant</span>
+          <h2>Voice Assistant</h2>
+        </div>
+        <button class="va-close" type="button" aria-label="Close assistant"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div class="va-status">Ready.</div>
+      <div class="va-messages" role="log" aria-label="Assistant messages"></div>
+      <form class="va-form">
+        <input class="va-input" type="text" placeholder="Ask about the website..." aria-label="Ask the voice assistant">
+        <button class="va-send" type="submit" aria-label="Send message"><i class="fa-solid fa-paper-plane"></i></button>
+      </form>
+    </div>
+    <div class="va-helper" aria-hidden="true"><span>Hold to Talk</span><span>Tap to Open Chat</span></div>
+    <div class="va-listening-label" aria-hidden="true">Listening...</div>
+    <button class="va-button" type="button" aria-label="Voice assistant. Tap to open, hold to talk">
+      <span class="va-ring" aria-hidden="true"></span>
+      <i class="fa-solid fa-microphone"></i>
+    </button>
+  `;
+  document.body.appendChild(wrapper);
+
+  const button = wrapper.querySelector(".va-button");
+  const panel = wrapper.querySelector(".va-panel");
+  const close = wrapper.querySelector(".va-close");
+  const status = wrapper.querySelector(".va-status");
+  const messages = wrapper.querySelector(".va-messages");
+  const form = wrapper.querySelector(".va-form");
+  const input = wrapper.querySelector(".va-input");
+
+  function openPanel() {
+    wrapper.classList.add("open");
+    panel.setAttribute("aria-hidden", "false");
+  }
+
+  function closePanel() {
+    wrapper.classList.remove("open");
+    panel.setAttribute("aria-hidden", "true");
+  }
+
+  function setStatus(text) {
+    status.textContent = text;
+  }
+
+  function addMessage(text, type = "assistant") {
+    const bubble = document.createElement("div");
+    bubble.className = `va-message ${type}`;
+    bubble.textContent = text;
+    messages.appendChild(bubble);
+    messages.scrollTop = messages.scrollHeight;
+  }
+
+  function runNavigation(intent) {
+    wrapper.classList.add("navigating");
+    setStatus(`Opening ${intent.label}...`);
+    window.setTimeout(() => {
+      if (intent.external) {
+        window.location.href = intent.target;
+        return;
+      }
+
+      const currentPage = window.location.pathname.split("/").pop() || "index.html";
+      if (currentPage === intent.target) {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        wrapper.classList.remove("navigating");
+        setStatus("Ready.");
+        return;
+      }
+
+      window.location.href = intent.target;
+    }, 650);
+  }
+
+  function runAudioIntent(intent) {
+    wrapper.classList.add("navigating");
+    setStatus(intent.action === "pause" ? "Turning music off..." : "Resuming music...");
+
+    if (intent.action === "pause") {
+      backgroundMusic.pause();
+    } else {
+      backgroundMusic.play();
+    }
+
+    window.setTimeout(() => {
+      wrapper.classList.remove("navigating");
+      setStatus("Ready.");
+    }, 700);
+  }
+
+  async function respondToPrompt(prompt) {
+    openPanel();
+    wrapper.classList.add("processing");
+    setStatus("Processing...");
+    const result = await generateAssistantResponse(prompt, createSiteContext());
+    wrapper.classList.remove("processing");
+    wrapper.classList.add("responding");
+    setStatus("Responding...");
+    addMessage(result.text);
+    speakAssistantText(result.text);
+    if (result.intent?.type === "navigate") {
+      runNavigation(result.intent);
+    }
+    if (result.intent?.type === "audio") {
+      runAudioIntent(result.intent);
+    }
+    window.setTimeout(() => {
+      wrapper.classList.remove("responding");
+      if (!wrapper.classList.contains("navigating")) {
+        setStatus("Ready.");
+      }
+    }, 900);
+  }
+
+  function startListening() {
+    vaIsListening = true;
+    wrapper.classList.add("listening");
+    openPanel();
+    setStatus("Listening...");
+    vaSpeechSession = startSpeechToText({
+      onResult: (transcript) => setStatus(transcript ? `Listening: ${transcript}` : "Listening..."),
+      onError: (message) => setStatus(message)
+    });
+  }
+
+  async function stopListening() {
+    if (!vaIsListening) return;
+    vaIsListening = false;
+    wrapper.classList.remove("listening");
+    setStatus("Processing...");
+    const transcript = await vaSpeechSession?.stop();
+    const prompt = transcript?.trim() || "Tell me about this website.";
+    if (transcript?.trim()) {
+      addMessage(transcript.trim(), "user");
+    }
+    respondToPrompt(prompt);
+  }
+
+  function beginHold(event) {
+    event.preventDefault();
+    vaIsHolding = false;
+    button.setPointerCapture?.(event.pointerId);
+    vaHoldTimer = window.setTimeout(() => {
+      vaIsHolding = true;
+      startListening();
+    }, 180);
+  }
+
+  function endHold(event) {
+    event.preventDefault();
+    window.clearTimeout(vaHoldTimer);
+    button.releasePointerCapture?.(event.pointerId);
+    if (vaIsHolding) {
+      stopListening();
+      return;
+    }
+    openPanel();
+  }
+
+  button.addEventListener("pointerdown", beginHold);
+  button.addEventListener("pointerup", endHold);
+  button.addEventListener("pointercancel", endHold);
+  button.addEventListener("lostpointercapture", () => {
+    window.clearTimeout(vaHoldTimer);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openPanel();
+    }
+  });
+  close.addEventListener("click", closePanel);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const prompt = input.value.trim();
+    if (!prompt) return;
+    addMessage(prompt, "user");
+    input.value = "";
+    respondToPrompt(prompt);
+  });
+}
+
+createVoiceAssistant();
