@@ -93,9 +93,8 @@ window.addEventListener("load", () => {
   }, delay);
 });
 
-let vaHoldTimer;
-let vaIsHolding = false;
 let vaIsListening = false;
+let vaIsStopping = false;
 let vaSpeechSession;
 const voiceProcessingDelay = 360;
 
@@ -124,9 +123,9 @@ function createVoiceAssistant() {
         <button class="va-send" type="submit" aria-label="Send message"><i class="fa-solid fa-paper-plane"></i></button>
       </form>
     </div>
-    <div class="va-helper" aria-hidden="true"><span>Hold to Talk</span><span>Tap to Open Chat</span></div>
+    <div class="va-helper" aria-hidden="true"><span>Tap to Talk</span><span>Tap Again to Stop</span></div>
     <div class="va-listening-label" aria-hidden="true">Listening...</div>
-    <button class="va-button" type="button" aria-label="Voice assistant. Tap to open, hold to talk">
+    <button class="va-button" type="button" aria-label="Start voice assistant listening">
       <span class="va-ring" aria-hidden="true"></span>
       <i class="fa-solid fa-microphone"></i>
     </button>
@@ -134,6 +133,7 @@ function createVoiceAssistant() {
   document.body.appendChild(wrapper);
 
   const button = wrapper.querySelector(".va-button");
+  const buttonIcon = button.querySelector("i");
   const panel = wrapper.querySelector(".va-panel");
   const close = wrapper.querySelector(".va-close");
   const status = wrapper.querySelector(".va-status");
@@ -153,6 +153,15 @@ function createVoiceAssistant() {
 
   function setStatus(text) {
     status.textContent = text;
+  }
+
+  function setButtonMode(mode) {
+    const isListeningMode = mode === "listening";
+    buttonIcon.className = isListeningMode ? "fa-solid fa-stop" : "fa-solid fa-microphone";
+    button.setAttribute(
+      "aria-label",
+      isListeningMode ? "Stop voice assistant listening" : "Start voice assistant listening"
+    );
   }
 
   function addMessage(text, type = "assistant") {
@@ -225,9 +234,12 @@ function createVoiceAssistant() {
   }
 
   function startListening() {
+    if (vaIsListening || vaIsStopping) return;
     vaIsListening = true;
+    vaIsStopping = false;
     wrapper.classList.add("listening");
     openPanel();
+    setButtonMode("listening");
     setStatus("Listening...");
     vaSpeechSession = startSpeechToText({
       onResult: (transcript) => setStatus(transcript ? `Listening: ${transcript}` : "Listening..."),
@@ -236,9 +248,11 @@ function createVoiceAssistant() {
   }
 
   async function stopListening() {
-    if (!vaIsListening) return;
+    if (!vaIsListening || vaIsStopping) return;
+    vaIsStopping = true;
     vaIsListening = false;
     wrapper.classList.remove("listening");
+    setButtonMode("idle");
     setStatus("Finishing...");
     await wait(voiceProcessingDelay);
     setStatus("Processing...");
@@ -250,46 +264,27 @@ function createVoiceAssistant() {
       addMessage(prompt, "user");
     }
 
-    respondToPrompt(prompt, {
-      source: "voice",
-      confidence: validation.speech.confidence,
-      isFinal: validation.speech.isFinal
-    });
+    try {
+      await respondToPrompt(prompt, {
+        source: "voice",
+        confidence: validation.speech.confidence,
+        isFinal: validation.speech.isFinal
+      });
+    } finally {
+      vaIsStopping = false;
+    }
   }
 
-  function beginHold(event) {
-    event.preventDefault();
-    vaIsHolding = false;
-    button.setPointerCapture?.(event.pointerId);
-    vaHoldTimer = window.setTimeout(() => {
-      vaIsHolding = true;
-      startListening();
-    }, 180);
-  }
-
-  function endHold(event) {
-    event.preventDefault();
-    window.clearTimeout(vaHoldTimer);
-    button.releasePointerCapture?.(event.pointerId);
-    if (vaIsHolding) {
+  function toggleListening() {
+    if (vaIsStopping) return;
+    if (vaIsListening) {
       stopListening();
       return;
     }
-    openPanel();
+    startListening();
   }
 
-  button.addEventListener("pointerdown", beginHold);
-  button.addEventListener("pointerup", endHold);
-  button.addEventListener("pointercancel", endHold);
-  button.addEventListener("lostpointercapture", () => {
-    window.clearTimeout(vaHoldTimer);
-  });
-  button.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      openPanel();
-    }
-  });
+  button.addEventListener("click", toggleListening);
   close.addEventListener("click", closePanel);
   form.addEventListener("submit", (event) => {
     event.preventDefault();

@@ -1544,11 +1544,10 @@ h3 {
     display: grid;
     gap: 14px;
     padding: 18px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
+    border: 1px solid #1e5f94;
     border-radius: var(--radius);
-    background: rgba(3, 13, 27, 0.92);
+    background: #08111e;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
-    backdrop-filter: blur(18px) saturate(1.12);
     opacity: 0;
     visibility: hidden;
     transform: translateY(-12px);
@@ -1556,8 +1555,8 @@ h3 {
   }
 
   [data-theme="dark"] .nav-panel {
-    background: rgba(3, 13, 27, 0.94);
-    border-color: rgba(102, 178, 255, 0.22);
+    background: #0D0D0D;
+    border-color: #264a68;
     box-shadow: 0 24px 70px rgba(0, 0, 0, 0.56);
   }
 
@@ -1579,7 +1578,7 @@ h3 {
 
   .nav-links a {
     color: rgba(255, 255, 255, 0.88);
-    background: rgba(255, 255, 255, 0.06);
+    background: #102943;
   }
 
   .nav-links a:hover,
@@ -1587,15 +1586,15 @@ h3 {
   [data-theme="dark"] .nav-links a:hover,
   [data-theme="dark"] .nav-links a.active {
     color: #FFFFFF;
-    background: rgba(0, 115, 196, 0.42);
+    background: #005da0;
     box-shadow: inset 3px 0 0 var(--accent);
   }
 
   .theme-toggle {
     height: 46px;
     color: #FFFFFF;
-    background: rgba(255, 255, 255, 0.09);
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+    background: #102943;
+    box-shadow: inset 0 0 0 1px #1e5f94;
   }
 
   .voice-assistant {
