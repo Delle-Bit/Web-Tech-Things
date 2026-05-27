@@ -1,13 +1,12 @@
-import backgroundTrackUrl from "./audio/Kirby dream land theme song 4.mp3";
-
 const AUDIO_STATE_KEY = "sti-background-music-state";
 const AUDIO_TIME_KEY = "sti-background-music-time";
+const BACKGROUND_TRACK_URL = "/audio/Kirby%20dream%20land%20theme%20song%204.mp3";
 const DEFAULT_VOLUME = 0.28;
 const FADE_STEP_MS = 40;
 
 class AudioManager {
   constructor() {
-    this.audio = new Audio(backgroundTrackUrl);
+    this.audio = new Audio(BACKGROUND_TRACK_URL);
     this.audio.loop = true;
     this.audio.preload = "auto";
     this.audio.volume = 0;
