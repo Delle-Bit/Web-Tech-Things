@@ -53,6 +53,23 @@ export const siteKnowledge = {
   ]
 };
 
+export const assistantSafety = {
+  lowConfidenceThreshold: 0.55,
+  minimumCommandWords: 2,
+  restrictedSchoolResponse: "Sorry, I cannot answer that. You may want to talk to an actual staff of STI.",
+  lowConfidenceFallbacks: [
+    "Please repeat that.",
+    "Sorry, I didn't catch that.",
+    "Could you say that again?",
+    "I couldn't understand clearly. Please repeat."
+  ],
+  incompleteCommandFallbacks: [
+    "Please complete your command.",
+    "Can you say that again?",
+    "I need more information to continue."
+  ]
+};
+
 export function createSiteContext() {
   const pageTitle = document.title;
   const activePage = document.querySelector(".nav-links a.active")?.textContent?.trim() || "Current page";
@@ -70,6 +87,170 @@ export function createSiteContext() {
     paragraphs,
     ...siteKnowledge
   };
+}
+
+export function normalizeSpeechInput(input) {
+  if (typeof input === "string") {
+    return {
+      transcript: input.trim(),
+      confidence: input.trim() ? 1 : 0,
+      isFinal: Boolean(input.trim())
+    };
+  }
+
+  return {
+    transcript: input?.transcript?.trim() || "",
+    confidence: Number.isFinite(input?.confidence) ? input.confidence : 0,
+    isFinal: Boolean(input?.isFinal)
+  };
+}
+
+export function getLowConfidenceFallback(prompt = "") {
+  const fallbacks = assistantSafety.lowConfidenceFallbacks;
+  const index = Math.abs([...prompt].reduce((total, char) => total + char.charCodeAt(0), 0)) % fallbacks.length;
+  return fallbacks[index];
+}
+
+export function getIncompleteCommandFallback(prompt = "") {
+  const fallbacks = assistantSafety.incompleteCommandFallbacks;
+  const index = Math.abs([...prompt].reduce((total, char) => total + char.charCodeAt(0), 0)) % fallbacks.length;
+  return fallbacks[index];
+}
+
+export function validateSpeechInput(input) {
+  const speech = normalizeSpeechInput(input);
+  const hasUsableTranscript = speech.transcript.length > 1;
+  const hasEnoughConfidence = speech.confidence >= assistantSafety.lowConfidenceThreshold;
+
+  if (!hasUsableTranscript || !hasEnoughConfidence) {
+    return {
+      ok: false,
+      text: getLowConfidenceFallback(speech.transcript),
+      speech
+    };
+  }
+
+  return {
+    ok: true,
+    text: speech.transcript,
+    speech
+  };
+}
+
+export function validateCommandCompleteness(prompt) {
+  const query = prompt
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = query ? query.split(" ") : [];
+
+  if (!query) {
+    return {
+      ok: false,
+      text: getIncompleteCommandFallback(query),
+      reason: "empty-command"
+    };
+  }
+
+  const endsWithConnector = /\b(the|to|for|with|in|on|at|from|of|a|an|this|that|my|your)$/;
+  const bareCommand = /^(open|go|show|visit|navigate|take|bring|stop|pause|mute|play|resume|start|turn|tell|search|find|give|what|where|who|when|how|why)$/;
+  const incompleteNavigation = /^(open|go|show|visit|navigate|take|bring)( me)?( to)?( the)?$/;
+  const incompleteAudio = /^(stop|pause|mute|play|resume|start|turn)( the| on| off| up| down)?$/;
+  const incompleteQuestion = /^(tell me about|what is|what are|where is|where are|who is|who are|how do|how can|can you|could you|please)$/;
+
+  const isCommandLike = /^(open|go|show|visit|navigate|take|bring|stop|pause|mute|play|resume|start|turn|tell|search|find|give|what|where|who|when|how|why|can|could|please)\b/.test(query);
+  const hasKnownSingleWordTopic = /^(home|facilities|facility|instructors|instructor|teachers|about|members|contact|location|address)$/;
+
+  if (
+    bareCommand.test(query)
+    || incompleteNavigation.test(query)
+    || incompleteAudio.test(query)
+    || incompleteQuestion.test(query)
+    || (isCommandLike && endsWithConnector.test(query))
+    || (words.length < assistantSafety.minimumCommandWords && isCommandLike && !hasKnownSingleWordTopic.test(query))
+  ) {
+    return {
+      ok: false,
+      text: getIncompleteCommandFallback(query),
+      reason: "incomplete-command"
+    };
+  }
+
+  return {
+    ok: true,
+    text: prompt.trim(),
+    reason: "complete"
+  };
+}
+
+export function isRestrictedSchoolQuestion(prompt) {
+  const query = prompt.toLowerCase().trim();
+  if (!query) return false;
+
+  const mentionsSchool = /\b(sti|school|college|campus|calamba|registrar|admin|staff|office)\b/.test(query);
+  if (!mentionsSchool) return false;
+
+  const asksOfficialInfo = [
+    /\btuition\b/,
+    /\bfee(s)?\b/,
+    /\bpayment(s)?\b/,
+    /\bregistrar\b/,
+    /\b(policy|policies)\b/,
+    /\badmission(s)?\b/,
+    /\benroll(?!ment-to-employment)\w*\b/,
+    /\brequirement(s)?\b/,
+    /\bscholarship(s)?\b/,
+    /\bgrade(s)?\b/,
+    /\bcredential(s)?\b/,
+    /\brecord(s)?\b/,
+    /\bdocument(s)?\b/,
+    /\bid card\b/,
+    /\buniform\b/,
+    /\bofficial\b/,
+    /\badministrative\b/,
+    /\bconcern(s)?\b/,
+    /\bcomplaint(s)?\b/
+  ].some((pattern) => pattern.test(query));
+
+  const asksUnavailableContact = /\b(contact|phone|email|number|address)\b/.test(query)
+    && /\b(registrar|admission(s)?|admin|administrator|staff|teacher|instructor|office|department|official)\b/.test(query);
+
+  return asksOfficialInfo || asksUnavailableContact;
+}
+
+export function getAssistantSafetyOverride(prompt, options = {}) {
+  if (options.source === "voice") {
+    const validation = validateSpeechInput({
+      transcript: prompt,
+      confidence: options.confidence,
+      isFinal: options.isFinal
+    });
+
+    if (!validation.ok) {
+      return {
+        intent: { type: "fallback", reason: "low-confidence-speech" },
+        text: validation.text
+      };
+    }
+  }
+
+  const completeness = validateCommandCompleteness(prompt);
+  if (!completeness.ok) {
+    return {
+      intent: { type: "fallback", reason: completeness.reason },
+      text: completeness.text
+    };
+  }
+
+  if (isRestrictedSchoolQuestion(prompt)) {
+    return {
+      intent: { type: "restricted", reason: "official-school-topic" },
+      text: assistantSafety.restrictedSchoolResponse
+    };
+  }
+
+  return null;
 }
 
 export function recognizeIntent(prompt) {
@@ -144,17 +325,25 @@ export function recognizeIntent(prompt) {
 export function startSpeechToText({ onResult, onError } = {}) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let transcript = "";
+  let confidence = 0;
+  let isFinal = false;
   let recognition;
   let resolveStop;
+  let didResolve = false;
   const stopped = new Promise((resolve) => {
     resolveStop = resolve;
   });
+  const resolveSpeech = () => {
+    if (didResolve) return;
+    didResolve = true;
+    resolveStop({ transcript, confidence, isFinal });
+  };
 
   if (!SpeechRecognition) {
-    resolveStop("");
+    resolveSpeech();
     onError?.("Speech recognition is not supported in this browser.");
     return {
-      stop: () => Promise.resolve("")
+      stop: () => Promise.resolve({ transcript: "", confidence: 0, isFinal: false })
     };
   }
 
@@ -164,11 +353,24 @@ export function startSpeechToText({ onResult, onError } = {}) {
   recognition.lang = "en-US";
 
   recognition.onresult = (event) => {
-    transcript = [...event.results]
+    const results = [...event.results];
+    transcript = results
       .map((result) => result[0]?.transcript || "")
       .join(" ")
       .trim();
-    onResult?.(transcript);
+    isFinal = results.some((result) => result.isFinal);
+
+    const confidenceValues = results
+      .map((result) => result[0]?.confidence)
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (confidenceValues.length) {
+      confidence = confidenceValues.reduce((total, value) => total + value, 0) / confidenceValues.length;
+    } else if (transcript) {
+      confidence = isFinal ? 0.75 : 0.45;
+    }
+
+    onResult?.(transcript, { confidence, isFinal });
   };
 
   recognition.onerror = () => {
@@ -176,13 +378,13 @@ export function startSpeechToText({ onResult, onError } = {}) {
   };
 
   recognition.onend = () => {
-    resolveStop(transcript);
+    resolveSpeech();
   };
 
   try {
     recognition.start();
   } catch {
-    resolveStop(transcript);
+    resolveSpeech();
   }
 
   return {
@@ -190,14 +392,19 @@ export function startSpeechToText({ onResult, onError } = {}) {
       try {
         recognition.stop();
       } catch {
-        resolveStop(transcript);
+        resolveSpeech();
       }
       return stopped;
     }
   };
 }
 
-export async function generateAssistantResponse(prompt, context = createSiteContext()) {
+export async function generateAssistantResponse(prompt, context = createSiteContext(), options = {}) {
+  const safetyOverride = getAssistantSafetyOverride(prompt, options);
+  if (safetyOverride) {
+    return safetyOverride;
+  }
+
   const intent = recognizeIntent(prompt);
   if (intent.type === "audio") {
     return {

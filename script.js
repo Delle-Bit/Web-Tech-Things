@@ -2,14 +2,14 @@ import {
   createSiteContext,
   generateAssistantResponse,
   speakAssistantText,
-  startSpeechToText
+  startSpeechToText,
+  validateSpeechInput
 } from "./voice-assistant-service.js";
 import { backgroundMusic } from "./audio-manager-service.js";
 
 const root = document.documentElement;
 const storedTheme = localStorage.getItem("sti-theme");
-const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-const initialTheme = storedTheme || (prefersDark ? "dark" : "light");
+const initialTheme = storedTheme || "light";
 
 root.dataset.theme = initialTheme;
 backgroundMusic.init();
@@ -29,9 +29,11 @@ if (loader && !shouldAnimateSplash) {
   loader.classList.add("hide");
 }
 
-function setTheme(theme) {
+function setTheme(theme, { persist = false } = {}) {
   root.dataset.theme = theme;
-  localStorage.setItem("sti-theme", theme);
+  if (persist) {
+    localStorage.setItem("sti-theme", theme);
+  }
 
   if (themeToggle && themeIcon) {
     const isDark = theme === "dark";
@@ -44,7 +46,7 @@ setTheme(initialTheme);
 
 themeToggle?.addEventListener("click", () => {
   const nextTheme = root.dataset.theme === "dark" ? "light" : "dark";
-  setTheme(nextTheme);
+  setTheme(nextTheme, { persist: true });
 });
 
 navToggle?.addEventListener("click", () => {
@@ -95,6 +97,13 @@ let vaHoldTimer;
 let vaIsHolding = false;
 let vaIsListening = false;
 let vaSpeechSession;
+const voiceProcessingDelay = 360;
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function createVoiceAssistant() {
   const wrapper = document.createElement("div");
@@ -191,11 +200,11 @@ function createVoiceAssistant() {
     }, 700);
   }
 
-  async function respondToPrompt(prompt) {
+  async function respondToPrompt(prompt, options = {}) {
     openPanel();
     wrapper.classList.add("processing");
     setStatus("Processing...");
-    const result = await generateAssistantResponse(prompt, createSiteContext());
+    const result = await generateAssistantResponse(prompt, createSiteContext(), options);
     wrapper.classList.remove("processing");
     wrapper.classList.add("responding");
     setStatus("Responding...");
@@ -230,13 +239,22 @@ function createVoiceAssistant() {
     if (!vaIsListening) return;
     vaIsListening = false;
     wrapper.classList.remove("listening");
+    setStatus("Finishing...");
+    await wait(voiceProcessingDelay);
     setStatus("Processing...");
-    const transcript = await vaSpeechSession?.stop();
-    const prompt = transcript?.trim() || "Tell me about this website.";
-    if (transcript?.trim()) {
-      addMessage(transcript.trim(), "user");
+    const speechResult = await vaSpeechSession?.stop();
+    const validation = validateSpeechInput(speechResult);
+    const prompt = validation.speech.transcript;
+
+    if (validation.ok) {
+      addMessage(prompt, "user");
     }
-    respondToPrompt(prompt);
+
+    respondToPrompt(prompt, {
+      source: "voice",
+      confidence: validation.speech.confidence,
+      isFinal: validation.speech.isFinal
+    });
   }
 
   function beginHold(event) {
