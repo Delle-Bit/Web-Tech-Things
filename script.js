@@ -11,6 +11,7 @@ const navToggle = document.querySelector(".nav-toggle");
 const navPanel = document.querySelector(".nav-panel");
 const revealItems = document.querySelectorAll(".reveal");
 const loader = document.querySelector(".loader");
+const splashSeen = sessionStorage.getItem("group-8-splash-seen") === "true";
 
 function setTheme(theme) {
   root.dataset.theme = theme;
@@ -18,7 +19,7 @@ function setTheme(theme) {
 
   if (themeToggle && themeIcon) {
     const isDark = theme === "dark";
-    themeIcon.textContent = isDark ? "☀" : "☾";
+    themeIcon.textContent = isDark ? "\u2600" : "\u263E";
     themeToggle.setAttribute("aria-label", isDark ? "Switch to light mode" : "Switch to dark mode");
   }
 }
@@ -58,5 +59,12 @@ const observer = new IntersectionObserver((entries) => {
 revealItems.forEach((item) => observer.observe(item));
 
 window.addEventListener("load", () => {
-  loader?.classList.add("hide");
+  if (!loader) return;
+
+  const delay = splashSeen ? 250 : 2400;
+
+  window.setTimeout(() => {
+    loader.classList.add("hide");
+    sessionStorage.setItem("group-8-splash-seen", "true");
+  }, delay);
 });
